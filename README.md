@@ -270,7 +270,15 @@ Seven unit tests cover opt-in and failure thresholds, avoiding rollback on the a
 
 The local walkthrough demonstrated Docker builds, a three-replica Kubernetes application, observation-mode failure detection, automatic restoration to `v1`, recovery verification, and a saved incident report. This validates the demonstrated workflow, not production scale or reliability.
 
-GitHub Actions runs the tests and builds all three images. It does not yet run an end-to-end Kubernetes recovery test.
+GitHub Actions runs the unit tests and container builds. A separate recovery job runs `python tests/e2e_recovery.py`: it creates a uniquely named kind cluster, verifies observation mode leaves the broken image unchanged, enables recovery, checks the exact incident's persisted result, confirms the restored image and HTTP response, and exports diagnostics before deleting its cluster. The new job still needs a successful CI run to establish end-to-end automated validation.
+
+Run the same test locally with Docker, kind, kubectl, and Python available:
+
+```bash
+python tests/e2e_recovery.py
+```
+
+The test uses a private kubeconfig and does not change your current Kubernetes context. Reports and diagnostics are written to `e2e-artifacts/`; GitHub Actions uploads these after the recovery job.
 
 ## Troubleshooting
 

@@ -14,3 +14,30 @@ jobs:
       - run: docker build --build-arg APP_VERSION=v1 -t kubeguard-demo:v1 app
       - run: docker build --build-arg APP_VERSION=v2 -t kubeguard-demo:v2 app
       - run: docker build -t kubeguard-controller:v1 controller
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install kind
+        run: |
+          curl --fail --location --retry 3 https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64 -o kind
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
+          kubectl version --client
+      - name: Verify end-to-end recovery
+        run: python tests/e2e_recovery.py
+      - name: Upload recovery diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-diagnostics
+          path: |
+            e2e-artifacts/*.txt
+            e2e-artifacts/*.log
+            e2e-artifacts/*.json
+            e2e-artifacts/*.md
