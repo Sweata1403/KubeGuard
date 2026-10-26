@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubeguard
+  namespace: kubeguard-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kubeguard
+  namespace: kubeguard-demo
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [demo]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kubeguard
+  namespace: kubeguard-demo
+subjects:
+  - kind: ServiceAccount
+    name: kubeguard
+    namespace: kubeguard-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kubeguard

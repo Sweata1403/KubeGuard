@@ -1,0 +1,16 @@
+name: Check recovery logic
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+      - run: docker build --build-arg APP_VERSION=v1 -t kubeguard-demo:v1 app
+      - run: docker build --build-arg APP_VERSION=v2 -t kubeguard-demo:v2 app
+      - run: docker build -t kubeguard-controller:v1 controller
