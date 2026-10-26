@@ -10,6 +10,32 @@ def deployment():
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_missing_approval_blocks_recovery(self):
+        for value in (None, ''):
+            with self.subTest(value=value):
+                d = deployment()
+                if value is None:
+                    del d['metadata']['annotations']['kubeguard.example/approved-image']
+                else:
+                    d['metadata']['annotations']['kubeguard.example/approved-image'] = value
+                self.assertIsNone(decide(d, 10))
+
+    def test_missing_opt_in_blocks_recovery(self):
+        d = deployment()
+        del d['metadata']['annotations']['kubeguard.example/enabled']
+        self.assertIsNone(decide(d, 10))
+
+    def test_unhealthy_business_endpoint_expires_verification(self):
+        api = object.__new__(Kubernetes)
+        d = deployment()
+        d['spec']['template']['spec']['containers'][0]['image'] = 'demo:v1'
+        with patch.object(api, 'request', return_value=d), \
+                patch('controller.main.healthy', return_value=False) as health, \
+                patch('controller.main.time.sleep'), \
+                patch('controller.main.time.monotonic', side_effect=[0, 1, 2, 4]):
+            self.assertFalse(verify(api, 'http://unused', 'a', 'demo:v1', seconds=3))
+            self.assertEqual(health.call_count, 2)
+
     def test_policy_requires_opt_in_and_failure_threshold(self):
         d = deployment()
         self.assertIsNone(decide(d, 2))

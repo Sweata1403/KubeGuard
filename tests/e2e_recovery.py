@@ -96,9 +96,97 @@ def main():
                  "r=urllib.request.urlopen('http://demo:8080/',timeout=5); "
                  "assert r.status==200; assert json.load(r)['version']=='v1'")
         kubectl('exec', 'deployment/kubeguard', '--', 'python', '-c', check)
+        (artifacts / 'success-controller.log').write_text(
+            kubectl('logs', 'deployment/kubeguard'), encoding='utf-8')
+
+        def execution(enabled):
+            kubectl('set', 'env', 'deployment/kubeguard',
+                    'EXECUTE=' + ('true' if enabled else 'false'))
+            kubectl('rollout', 'status', 'deployment/kubeguard', '--timeout=180s')
+
+        def incident_key():
+            metadata = deployment()['metadata']
+            return metadata['uid'] + ':' + str(metadata['generation'])
+
+        def journal_status(key):
+            script = ("import json,sqlite3; c=sqlite3.connect('/data/incidents.db'); "
+                      "print(json.dumps(c.execute('SELECT status FROM incidents WHERE key=?', "
+                      f"({key!r},)).fetchone()))")
+            return json.loads(kubectl('exec', 'deployment/kubeguard', '--',
+                                      'python', '-c', script))
+
+        # Exercise policy refusal with execution enabled and real failing requests.
+        for scenario in ('disabled', 'missing-approval'):
+            execution(False)
+            if scenario == 'disabled':
+                kubectl('annotate', 'deployment/demo',
+                        'kubeguard.example/enabled=false', '--overwrite')
+                kubectl('set', 'image', 'deployment/demo', 'demo=kubeguard-demo:v2')
+            else:
+                kubectl('annotate', 'deployment/demo',
+                        'kubeguard.example/approved-image-')
+                kubectl('annotate', 'deployment/demo',
+                        'kubeguard.example/enabled=true', '--overwrite')
+            kubectl('rollout', 'status', 'deployment/demo', '--timeout=120s')
+            key = incident_key()
+            execution(True)
+
+            def refused():
+                entries = [json.loads(line) for line in
+                           kubectl('logs', 'deployment/kubeguard').splitlines()
+                           if line.startswith('{')]
+                current = [entry for entry in entries if entry.get('incident') == key]
+                if any(entry.get('status') in ('attempting', 'would_rollback', 'recovered')
+                       for entry in current):
+                    raise AssertionError(f'{scenario}: recovery bypassed policy')
+                return any(entry.get('status') == 'observing' and
+                           entry.get('consecutive_failures', 0) >= 4 for entry in current)
+
+            wait_for(f'Policy refused recovery: {scenario}', refused)
+            if image() != 'kubeguard-demo:v2' or journal_status(key) is not None:
+                raise AssertionError(f'{scenario}: workload changed or action recorded')
+            (artifacts / f'{scenario}.log').write_text(
+                kubectl('logs', 'deployment/kubeguard'), encoding='utf-8')
+
+        execution(False)
+        kubectl('annotate', 'deployment/demo',
+                'kubeguard.example/approved-image=kubeguard-demo:v1', '--overwrite')
+        # An image-only rollback cannot repair a broken environment setting.
+        kubectl('set', 'env', 'deployment/demo', 'APP_VERSION=v2')
+        kubectl('rollout', 'status', 'deployment/demo', '--timeout=120s')
+        failed_key = incident_key()
+        execution(True)
+
+        def recovery_failed():
+            status = journal_status(failed_key)
+            if status == ['recovered']:
+                raise AssertionError('Unhealthy application was reported recovered')
+            return status == ['needs_engineer']
+
+        wait_for('Failed recovery recorded needs_engineer', recovery_failed, seconds=240)
+        if image() != 'kubeguard-demo:v1':
+            raise AssertionError('Failure exercise did not restore the approved image')
+        (artifacts / 'failed-recovery.log').write_text(
+            kubectl('logs', 'deployment/kubeguard'), encoding='utf-8')
+        # After restart, the approved-image policy should prevent further action;
+        # separately confirm that the failed incident survives the restart.
+        execution(False)
+        execution(True)
+
+        def no_retry():
+            entries = [json.loads(line) for line in
+                       kubectl('logs', 'deployment/kubeguard').splitlines()
+                       if line.startswith('{')]
+            if any(entry.get('status') == 'attempting' for entry in entries):
+                raise AssertionError('Controller retried after failed recovery')
+            return any(entry.get('consecutive_failures', 0) >= 4 for entry in entries)
+
+        wait_for('Restart did not trigger another action on the approved image', no_retry)
+        if journal_status(failed_key) != ['needs_engineer']:
+            raise AssertionError('Failed recovery record was lost after restart')
         report = kubectl('exec', 'deployment/kubeguard', '--', 'python', 'report.py')
         (artifacts / 'report.md').write_text(report, encoding='utf-8')
-        print('PASS: observation, rollback, journal, rollout, and HTTP response', flush=True)
+        print('PASS: recovery, disabled policy, missing approval, and failed verification', flush=True)
     finally:
         for filename, args in (
             ('pods.txt', ('get', 'pods', '-o', 'wide')),

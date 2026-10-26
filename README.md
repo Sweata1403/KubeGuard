@@ -33,7 +33,7 @@ These are product objectives, not measured customer outcomes. The MVP does not y
 | Persistent records | SQLite incident journal mounted on a PersistentVolumeClaim |
 | Handover report | Markdown output with UTC timestamps, status, incident identifier, and detail |
 | Scoped API access | Read and patch permissions for only the named demo Deployment |
-| Automated checks | Seven unit tests and a GitHub Actions workflow that runs tests and builds images |
+| Automated checks | Ten unit tests and a GitHub Actions workflow that runs tests and builds images |
 
 The controller is currently restricted to `kubeguard-demo/demo`, with a single application container named `demo`. Recovery verification expects the sample application's `v1` response. This is not yet a general-purpose recovery controller for arbitrary workloads.
 
@@ -266,11 +266,11 @@ This repository currently provides no commercial license, SLA, compliance certif
 
 ## Validation
 
-Seven unit tests cover opt-in and failure thresholds, avoiding rollback on the approved image, rollout completion, persistent attempt tracking, patch guards, replacement Deployment detection, and repeated successful recovery checks.
+Ten unit tests cover opt-in and failure thresholds, avoiding rollback on the approved image, rollout completion, persistent attempt tracking, patch guards, replacement Deployment detection, and repeated successful recovery checks.
 
 The local walkthrough demonstrated Docker builds, a three-replica Kubernetes application, observation-mode failure detection, automatic restoration to `v1`, recovery verification, and a saved incident report. This validates the demonstrated workflow, not production scale or reliability.
 
-GitHub Actions runs the unit tests and container builds. A separate recovery job runs `python tests/e2e_recovery.py`: it creates a uniquely named kind cluster, verifies observation mode leaves the broken image unchanged, enables recovery, checks the exact incident's persisted result, confirms the restored image and HTTP response, and exports diagnostics before deleting its cluster. The new job still needs a successful CI run to establish end-to-end automated validation.
+GitHub Actions runs the unit tests and container builds. A separate recovery job runs `python tests/e2e_recovery.py`: it creates a uniquely named kind cluster, verifies observation mode leaves the broken image unchanged, enables recovery, checks the exact incident's persisted result, confirms the restored image and HTTP response, and exports diagnostics before deleting its cluster. The initial recovery job passed in GitHub Actions. The expanded scenarios below require a new CI run.
 
 Run the same test locally with Docker, kind, kubectl, and Python available:
 
@@ -307,3 +307,8 @@ kubectl --context kind-kubeguard -n kubeguard-demo logs --tail=50 deployment/kub
 - [kind quick start](https://kind.sigs.k8s.io/docs/user/quick-start/)
 
 For technical evaluation or improvement proposals, use this repository's Issues tab.
+
+### Additional recovery boundary scenarios
+
+The end-to-end test also enables execution while testing disabled workload opt-in and missing image approval. It waits for at least four failed observations, then checks that the image remains unchanged and no action was journaled. A separate scenario deliberately keeps APP_VERSION=v2 in the pod environment so restoring the v1 image cannot repair the application. The test requires needs_engineer, checks that the incident survives a controller restart, and confirms no further action occurs while already on the approved image. These scenarios use only the test's disposable cluster.
+
