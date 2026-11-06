@@ -10,6 +10,38 @@ from urllib.request import Request, urlopen
 TOKEN_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 PREFIX = "kubeguard.example/"
 
+def load_settings(environ=None):
+    """Read positive integer settings once at startup."""
+    environ = os.environ if environ is None else environ
+
+    defaults = {
+        "FAILURE_THRESHOLD": 3,
+        "POLL_INTERVAL_SECONDS": 5,
+        "RECOVERY_TIMEOUT_SECONDS": 120,
+        "RECOVERY_SUCCESS_THRESHOLD": 5,
+        "RECOVERY_CHECK_INTERVAL_SECONDS": 2,
+    }
+
+    settings = {}
+
+    for name, default in defaults.items():
+        raw = environ.get(name, str(default))
+
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{name} must be a positive integer; got {raw!r}"
+            ) from None
+
+        if value <= 0:
+            raise ValueError(
+                f"{name} must be greater than zero; got {raw!r}"
+            )
+
+        settings[name] = value
+
+    return settings
 
 def decide(deployment, failures, threshold=3):
     """Policy decision, isolated from network calls so it is easy to test."""
@@ -93,22 +125,47 @@ class Journal:
         print(json.dumps({"incident": key, "status": status, "detail": detail}), flush=True)
 
 
-def verify(api, url, uid, approved, seconds=120):
-    deadline, successes = time.monotonic() + seconds, 0
+def verify(
+    api,
+    url,
+    uid,
+    approved,
+    seconds=120,
+    success_threshold=5,
+    check_interval=2,
+):
+    deadline = time.monotonic() + seconds
+    successes = 0
+
     while time.monotonic() < deadline:
         deployment = api.request()
         image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+
         if deployment["metadata"]["uid"] != uid or image != approved:
             return False
-        # All replicas must be replaced AND the business endpoint must work.
-        successes = successes + 1 if settled(deployment) and healthy(url, "v1") else 0
-        if successes >= 5:
+
+        # All replicas must be replaced and business requests must succeed.
+        successes = (
+            successes + 1
+            if settled(deployment) and healthy(url, "v1")
+            else 0
+        )
+
+        if successes >= success_threshold:
             return True
-        time.sleep(2)
+
+        time.sleep(check_interval)
+
     return False
 
 
 def run():
+    settings = load_settings()
+    print(
+        json.dumps({"status": "configured", "settings": settings}),
+        flush=True,
+    )
+
     api = Kubernetes()
     journal = Journal(os.getenv("JOURNAL", "/data/incidents.db"))
     url = "http://demo.kubeguard-demo.svc.cluster.local:8080/"
@@ -122,7 +179,11 @@ def run():
             if key != observed:
                 observed, failures = key, 0
             failures = 0 if healthy(url) else failures + 1
-            approved = decide(deployment, failures)
+            approved = decide(
+                deployment, 
+                failures,
+                threshold=settings["FAILURE_THRESHOLD"],
+                )
             if approved and not journal.attempted(key):
                 if not execute:
                     print(json.dumps({"status": "would_rollback", "incident": key, "image": approved}), flush=True)
@@ -131,14 +192,26 @@ def run():
                     journal.record(key, "attempting", "Restoring approved image " + approved)
                     try:
                         api.rollback(deployment, approved)
-                        recovered = verify(api, url, meta["uid"], approved)
+                        recovered = verify(
+                            api,
+                            url,
+                            meta["uid"],
+                            approved,
+                            seconds=settings["RECOVERY_TIMEOUT_SECONDS"],
+                            success_threshold=settings[
+                                "RECOVERY_SUCCESS_THRESHOLD"
+                            ],
+                            check_interval=settings[
+                                "RECOVERY_CHECK_INTERVAL_SECONDS"
+                            ],
+                        )
                         journal.record(key, "recovered" if recovered else "needs_engineer", "Recovery verified" if recovered else "Recovery deadline exceeded or deployment changed")
                     except Exception as error:
                         journal.record(key, "needs_engineer", type(error).__name__ + ": " + str(error))
             print(json.dumps({"status": "observing", "incident": key, "consecutive_failures": failures}), flush=True)
         except Exception as error:
             print(json.dumps({"status": "controller_error", "detail": str(error)}), flush=True)
-        time.sleep(5)
+        time.sleep(settings["POLL_INTERVAL_SECONDS"])
 
 
 if __name__ == "__main__":

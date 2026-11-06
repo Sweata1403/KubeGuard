@@ -48,12 +48,12 @@ def main():
         for version in ('v1', 'v2'):
             command('docker', 'build', '--build-arg', f'APP_VERSION={version}',
                     '-t', f'kubeguard-demo:{version}', 'app')
-        command('docker', 'build', '-t', 'kubeguard-controller:v1', 'controller')
+        command('docker', 'build', '-t', 'kubeguard-controller:v2', 'controller')
         # A private kubeconfig avoids changing the operator's current context.
         command('kind', 'create', 'cluster', '--name', name, '--wait', '180s',
                 '--kubeconfig', str(config))
         command('kind', 'load', 'docker-image', 'kubeguard-demo:v1',
-                'kubeguard-demo:v2', 'kubeguard-controller:v1', '--name', name)
+                'kubeguard-demo:v2', 'kubeguard-controller:v2', '--name', name)
         for manifest in ('namespace', 'rbac', 'demo', 'controller'):
             kubectl('apply', '-f', f'k8s/{manifest}.yaml')
         for target in ('demo', 'kubeguard'):

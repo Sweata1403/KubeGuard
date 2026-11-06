@@ -86,6 +86,28 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(verify(api, "http://unused", "a", "demo:v1"))
             self.assertEqual(health.call_count, 5)
 
+    def test_custom_verification_settings(self):
+        api = object.__new__(Kubernetes)
+        d = deployment()
+        d["spec"]["template"]["spec"]["containers"][0]["image"] = "demo:v1"
+
+        with patch.object(api, "request", return_value=d), \
+                patch("controller.main.healthy", return_value=True) as health, \
+                patch("controller.main.time.sleep") as sleep:
+            result = verify(
+                api,
+                "http://unused",
+                "a",
+                "demo:v1",
+                seconds=120,
+                success_threshold=2,
+                check_interval=7,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(health.call_count, 2)
+        sleep.assert_called_once_with(7)
+
 
 if __name__ == "__main__":
     unittest.main()

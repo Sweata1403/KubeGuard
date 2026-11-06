@@ -4,9 +4,11 @@ metadata:
   name: journal
   namespace: kubeguard-demo
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes:
+    - ReadWriteOnce
   resources:
-    requests: {storage: 100Mi}
+    requests:
+      storage: 100Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -15,33 +17,57 @@ metadata:
   namespace: kubeguard-demo
 spec:
   replicas: 1
-  strategy: {type: Recreate}
+  strategy:
+    type: Recreate
   selector:
-    matchLabels: {app: kubeguard}
+    matchLabels:
+      app: kubeguard
   template:
     metadata:
-      labels: {app: kubeguard}
+      labels:
+        app: kubeguard
     spec:
       serviceAccountName: kubeguard
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         fsGroup: 10001
-        seccompProfile: {type: RuntimeDefault}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: controller
-          image: kubeguard-controller:v1
+          image: kubeguard-controller:v2
           imagePullPolicy: IfNotPresent
           env:
-            - {name: EXECUTE, value: "false"}
+            - name: EXECUTE
+              value: "false"
+            - name: FAILURE_THRESHOLD
+              value: "3"
+            - name: POLL_INTERVAL_SECONDS
+              value: "5"
+            - name: RECOVERY_TIMEOUT_SECONDS
+              value: "120"
+            - name: RECOVERY_SUCCESS_THRESHOLD
+              value: "5"
+            - name: RECOVERY_CHECK_INTERVAL_SECONDS
+              value: "2"
           resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {cpu: 250m, memory: 128Mi}
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
-            capabilities: {drop: [ALL]}
-          volumeMounts: [{name: journal, mountPath: /data}]
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: journal
+              mountPath: /data
       volumes:
         - name: journal
-          persistentVolumeClaim: {claimName: journal}
+          persistentVolumeClaim:
+            claimName: journal
